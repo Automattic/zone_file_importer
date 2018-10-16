@@ -18,7 +18,7 @@ var output = make(chan string)
 var ftpHost = os.Getenv("zf_ftp_host")
 var username = os.Getenv("zf_user")
 var password = os.Getenv("zf_pass")
-var threads = 5
+var workers = 5
 
 func main() {
 	var wg sync.WaitGroup
@@ -26,7 +26,7 @@ func main() {
 
 	entries := zoneList()
 
-	for i := 0; i < threads; i++ {
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go worker(&wg)
 	}
