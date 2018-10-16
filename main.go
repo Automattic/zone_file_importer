@@ -14,9 +14,10 @@ import (
 
 var jobs = make(chan *ftp.Entry)
 var output = make(chan string)
-var ftpHost = os.Getenv("ftp_host")
+var ftpHost = os.Getenv("zf_ftp_host")
 var username = os.Getenv("zf_user")
 var password = os.Getenv("zf_pass")
+var threads = 5
 
 func main() {
 	var wg sync.WaitGroup
@@ -24,7 +25,7 @@ func main() {
 
 	entries := zoneList()
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < threads; i++ {
 		wg.Add(1)
 		go worker(&wg)
 	}
@@ -38,13 +39,21 @@ func main() {
 }
 
 func worker(wg *sync.WaitGroup) {
+	var conn, ftpErr = ftp.Connect(ftpHost)
+
+	if ftpErr != nil {
+		log.Fatal(ftpErr)
+	}
+
+	conn.Login(username, password)
+
 	for job := range jobs {
-		downloadZone(job)
+		downloadZone(job, conn)
 	}
 	wg.Done()
 }
 
-func parseZone(entry *ftp.Entry, data io.Reader, conn *ftp.ServerConn) {
+func parseZone(entry *ftp.Entry, data io.Reader) {
 	// Should add the tld as the second param in case origin is not set
 	parsed := dns.ParseZone(data, "", "")
 	for x := range parsed {
@@ -55,12 +64,11 @@ func parseZone(entry *ftp.Entry, data io.Reader, conn *ftp.ServerConn) {
 
 		output <- x.RR.String()
 	}
-
-	conn.Quit()
 }
 
 func zoneList() []*ftp.Entry {
 	var conn, ftpErr = ftp.Connect(ftpHost)
+
 	if ftpErr != nil {
 		log.Fatal(ftpErr)
 	}
@@ -74,23 +82,11 @@ func zoneList() []*ftp.Entry {
 	}
 
 	conn.Quit()
-
 	return entries
 }
 
-func downloadZone(entry *ftp.Entry) {
-	conn, err := ftp.Connect(ftpHost)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	conn.Login(username, password)
-
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+func downloadZone(entry *ftp.Entry, conn *ftp.ServerConn) {
+	fmt.Println("Downloading zone: " + entry.Name + "\n")
 	resp, err := conn.Retr("/zonefiles/" + entry.Name)
 
 	if err != nil {
@@ -104,7 +100,8 @@ func downloadZone(entry *ftp.Entry) {
 		return
 	}
 
-	parseZone(entry, reader, conn)
+	parseZone(entry, reader)
+	resp.Close()
 }
 
 func writer() {
