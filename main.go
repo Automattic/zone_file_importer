@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/jlaffaye/ftp"
@@ -115,7 +116,7 @@ func writer() {
 		if line == "BREAK" {
 			break
 		}
-		file.WriteString(line + "\n")
+		file.WriteString(strings.ToLower(line) + "\n")
 	}
 
 	file.Close()
