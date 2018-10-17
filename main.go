@@ -34,9 +34,11 @@ func main() {
 	for _, entry := range entries {
 		jobs <- entry
 	}
+	close(jobs)
 
 	wg.Wait()
-	output <- "BREAK"
+
+	close(output)
 }
 
 func worker(wg *sync.WaitGroup) {
@@ -112,12 +114,13 @@ func writer() {
 	}
 
 	for {
-		line := <-output
-		if line == "BREAK" {
-			break
+		line, ok := <-output
+		if ok {
+			file.WriteString(strings.ToLower(line) + "\n")
+		} else {
+			file.Close()
+			return
 		}
-		file.WriteString(strings.ToLower(line) + "\n")
-	}
 
-	file.Close()
+	}
 }
