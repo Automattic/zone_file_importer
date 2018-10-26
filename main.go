@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -83,6 +84,10 @@ func zoneList() []*ftp.Entry {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Size > entries[j].Size
+	})
 
 	conn.Quit()
 	return entries
