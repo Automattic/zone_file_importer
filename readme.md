@@ -4,8 +4,6 @@ Env vars needed:
 "zf_user"
 "zf_pass"
 
-go get github.com/jlaffaye/ftp
-
-go get github.com/miekg/dns
+go mod tidy
 
 go run main.go

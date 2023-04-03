@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"bufio"
 	"log"
 	"os"
 	"sort"
@@ -35,6 +36,7 @@ func main() {
 	for _, entry := range entries {
 		jobs <- entry
 	}
+
 	close(jobs)
 
 	wg.Wait()
@@ -43,7 +45,7 @@ func main() {
 }
 
 func worker(wg *sync.WaitGroup) {
-	var conn, ftpErr = ftp.Connect(ftpHost)
+	var conn, ftpErr = ftp.Dial(ftpHost)
 
 	if ftpErr != nil {
 		log.Fatal(ftpErr)
@@ -59,14 +61,14 @@ func worker(wg *sync.WaitGroup) {
 
 func parseZone(entry *ftp.Entry, data io.Reader) {
 	// Should add the tld as the second param in case origin is not set
-	parsed := dns.ParseZone(data, "", "")
-	for x := range parsed {
-		if x.Error != nil {
-			fmt.Println(x.Error)
-			continue
-		}
+	zp := dns.NewZoneParser(data, "", "")
+	
+	for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
+		output <- rr.String()
+	}
 
-		output <- x.RR.String()
+	if zp.Err != nil {
+		fmt.Println(zp.Err)
 	}
 }
 
@@ -97,19 +99,26 @@ func downloadZone(entry *ftp.Entry, conn *ftp.ServerConn) {
 	fmt.Println("Downloading zone: " + entry.Name + "\n")
 	resp, err := conn.Retr("/zonefiles/" + entry.Name)
 
+	defer resp.Close()
+
+	isGzFile := strings.HasSuffix( entry.Name, ".gz")
+
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	reader, e := gzip.NewReader(resp)
-	if e != nil {
-		fmt.Println(err)
-		return
+	if isGzFile == true {
+		reader, e := gzip.NewReader(resp)
+		if e != nil {
+			fmt.Println(e)
+			return
+		}
+		parseZone(entry, reader)
+	} else {
+		reader := bufio.NewReader(resp)
+		parseZone(entry, reader)
 	}
-
-	parseZone(entry, reader)
-	resp.Close()
 }
 
 func writer() {
