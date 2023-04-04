@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"path/filepath"
 
 	"github.com/jlaffaye/ftp"
 	"github.com/miekg/dns"
@@ -26,7 +27,7 @@ func main() {
 	var wg sync.WaitGroup
 	go writer()
 
-	entries := zoneList()
+	entries := filterEntries( zoneList() )
 
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -67,13 +68,53 @@ func parseZone(entry *ftp.Entry, data io.Reader) {
 		output <- rr.String()
 	}
 
-	if zp.Err != nil {
-		fmt.Println(zp.Err)
+	if zp.Err() != nil {
+		fmt.Println("Got error from NewZoneParser::Next for " + entry.Name)
+		fmt.Println(zp.Err())
 	}
+}
+
+func filterEntries(entries []*ftp.Entry) []*ftp.Entry {
+	baseNames := make(map[string]bool)
+
+	// First pass: Populate the map with base names and whether they have a .gz file
+	for _, entry := range entries {
+		ext := filepath.Ext(entry.Name)
+		base := strings.TrimSuffix(entry.Name, ext)
+
+		if ( ext == ".gz" ) {
+			baseNames[base] = true
+		} else {
+			baseNames[base + ext] = false || baseNames[base + ext]
+		}
+	}
+
+	// Second pass: Filter the entries based on the map
+	filtered := make([]*ftp.Entry, 0, len(entries))
+
+	for _, entry := range entries {
+		if ( entry.Name == "." || entry.Name == ".." ) {
+			continue
+		}
+
+		ext := filepath.Ext(entry.Name)
+		base := strings.TrimSuffix(entry.Name, ext)
+
+		// Keep the entry if it has a .gz extension or if there's no .gz version for the base name
+		if ext == ".gz" {
+			filtered = append(filtered, entry)
+		} else if baseNames[base + ext] == false {
+			filtered = append(filtered, entry)
+		}
+	}
+
+	return filtered
 }
 
 func zoneList() []*ftp.Entry {
 	var conn, ftpErr = ftp.Connect(ftpHost)
+
+	defer conn.Quit()
 
 	if ftpErr != nil {
 		log.Fatal(ftpErr)
@@ -88,10 +129,9 @@ func zoneList() []*ftp.Entry {
 	}
 
 	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].Size > entries[j].Size
+		return entries[i].Size < entries[j].Size
 	})
-
-	conn.Quit()
+	
 	return entries
 }
 
@@ -104,6 +144,7 @@ func downloadZone(entry *ftp.Entry, conn *ftp.ServerConn) {
 	isGzFile := strings.HasSuffix( entry.Name, ".gz")
 
 	if err != nil {
+		fmt.Println("Got error from conn.Retr for " + entry.Name)
 		fmt.Println(err)
 		return
 	}
@@ -111,6 +152,7 @@ func downloadZone(entry *ftp.Entry, conn *ftp.ServerConn) {
 	if isGzFile == true {
 		reader, e := gzip.NewReader(resp)
 		if e != nil {
+			fmt.Println("Got error from gzip Reader for " + entry.Name)
 			fmt.Println(e)
 			return
 		}
@@ -123,6 +165,7 @@ func downloadZone(entry *ftp.Entry, conn *ftp.ServerConn) {
 
 func writer() {
 	file, err := os.Create("results.txt")
+
 	if err != nil {
 		log.Fatal("Cannot create file", err)
 	}
