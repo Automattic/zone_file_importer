@@ -129,7 +129,7 @@ func zoneList() []*ftp.Entry {
 	}
 
 	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].Size < entries[j].Size
+		return entries[i].Size > entries[j].Size
 	})
 	
 	return entries
