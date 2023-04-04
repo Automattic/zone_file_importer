@@ -4,11 +4,13 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"bufio"
 	"log"
 	"os"
 	"sort"
 	"strings"
 	"sync"
+	"path/filepath"
 
 	"github.com/jlaffaye/ftp"
 	"github.com/miekg/dns"
@@ -25,7 +27,7 @@ func main() {
 	var wg sync.WaitGroup
 	go writer()
 
-	entries := zoneList()
+	entries := filterEntries( zoneList() )
 
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -35,6 +37,7 @@ func main() {
 	for _, entry := range entries {
 		jobs <- entry
 	}
+
 	close(jobs)
 
 	wg.Wait()
@@ -43,7 +46,7 @@ func main() {
 }
 
 func worker(wg *sync.WaitGroup) {
-	var conn, ftpErr = ftp.Connect(ftpHost)
+	var conn, ftpErr = ftp.Dial(ftpHost)
 
 	if ftpErr != nil {
 		log.Fatal(ftpErr)
@@ -59,19 +62,57 @@ func worker(wg *sync.WaitGroup) {
 
 func parseZone(entry *ftp.Entry, data io.Reader) {
 	// Should add the tld as the second param in case origin is not set
-	parsed := dns.ParseZone(data, "", "")
-	for x := range parsed {
-		if x.Error != nil {
-			fmt.Println(x.Error)
+	zp := dns.NewZoneParser(data, "", "")
+	
+	for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
+		output <- rr.String()
+	}
+
+	if zp.Err() != nil {
+		fmt.Println("Got error from NewZoneParser::Next for " + entry.Name)
+		fmt.Println(zp.Err())
+	}
+}
+
+func filterEntries(entries []*ftp.Entry) []*ftp.Entry {
+	baseNames := make(map[string]bool)
+
+	// First pass: Populate the map with base names and whether they have a .gz extension
+	for _, entry := range entries {
+		ext := filepath.Ext(entry.Name)
+		base := strings.TrimSuffix(entry.Name, ext)
+
+		if ( ext == ".gz" ) {
+			baseNames[base] = true
+		} else {
+			baseNames[base + ext] = false || baseNames[base + ext]
+		}
+	}
+
+	// Second pass: Filter the entries based on the map
+	filtered := make([]*ftp.Entry, 0, len(entries))
+
+	for _, entry := range entries {
+		if ( entry.Name == "." || entry.Name == ".." ) {
 			continue
 		}
 
-		output <- x.RR.String()
+		ext := filepath.Ext(entry.Name)
+		base := strings.TrimSuffix(entry.Name, ext)
+
+		// Keep the entry if it has a .gz extension or if there's no .gz version for the base name
+		if ext == ".gz" || baseNames[base + ext] == false {
+			filtered = append(filtered, entry)
+		}
 	}
+
+	return filtered
 }
 
 func zoneList() []*ftp.Entry {
 	var conn, ftpErr = ftp.Connect(ftpHost)
+
+	defer conn.Quit()
 
 	if ftpErr != nil {
 		log.Fatal(ftpErr)
@@ -88,8 +129,7 @@ func zoneList() []*ftp.Entry {
 	sort.SliceStable(entries, func(i, j int) bool {
 		return entries[i].Size > entries[j].Size
 	})
-
-	conn.Quit()
+	
 	return entries
 }
 
@@ -97,23 +137,33 @@ func downloadZone(entry *ftp.Entry, conn *ftp.ServerConn) {
 	fmt.Println("Downloading zone: " + entry.Name + "\n")
 	resp, err := conn.Retr("/zonefiles/" + entry.Name)
 
+	defer resp.Close()
+
+	isGzFile := strings.HasSuffix( entry.Name, ".gz")
+
 	if err != nil {
+		fmt.Println("Got error from conn.Retr for " + entry.Name)
 		fmt.Println(err)
 		return
 	}
 
-	reader, e := gzip.NewReader(resp)
-	if e != nil {
-		fmt.Println(err)
-		return
+	if isGzFile == true {
+		reader, e := gzip.NewReader(resp)
+		if e != nil {
+			fmt.Println("Got error from gzip Reader for " + entry.Name)
+			fmt.Println(e)
+			return
+		}
+		parseZone(entry, reader)
+	} else {
+		reader := bufio.NewReader(resp)
+		parseZone(entry, reader)
 	}
-
-	parseZone(entry, reader)
-	resp.Close()
 }
 
 func writer() {
 	file, err := os.Create("results.txt")
+
 	if err != nil {
 		log.Fatal("Cannot create file", err)
 	}
