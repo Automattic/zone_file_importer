@@ -77,7 +77,7 @@ func parseZone(entry *ftp.Entry, data io.Reader) {
 func filterEntries(entries []*ftp.Entry) []*ftp.Entry {
 	baseNames := make(map[string]bool)
 
-	// First pass: Populate the map with base names and whether they have a .gz file
+	// First pass: Populate the map with base names and whether they have a .gz extension
 	for _, entry := range entries {
 		ext := filepath.Ext(entry.Name)
 		base := strings.TrimSuffix(entry.Name, ext)
@@ -101,9 +101,7 @@ func filterEntries(entries []*ftp.Entry) []*ftp.Entry {
 		base := strings.TrimSuffix(entry.Name, ext)
 
 		// Keep the entry if it has a .gz extension or if there's no .gz version for the base name
-		if ext == ".gz" {
-			filtered = append(filtered, entry)
-		} else if baseNames[base + ext] == false {
+		if ext == ".gz" || baseNames[base + ext] == false {
 			filtered = append(filtered, entry)
 		}
 	}
